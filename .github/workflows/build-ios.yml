@@ -54,6 +54,14 @@ jobs:
       - name: 🔨 Expo prebuild
         run: npx expo prebuild --platform ios --clean
 
+      # === 3.5 移除开发专用模块（ExpoLogBox等），避免编译兼容问题 ===
+      - name: 🧹 Remove dev-only pods
+        run: |
+          cd ios
+          # 移除 ExpoLogBox（开发调试用，生产不需要）
+          sed -i '' '/ExpoLogBox/d' Podfile || sed -i '/ExpoLogBox/d' Podfile
+          echo "✅ 已移除 ExpoLogBox"
+
       # === 4. 安装 CocoaPods ===
       - name: 📦 Install Pods
         run: |
@@ -100,8 +108,8 @@ jobs:
             DEVELOPMENT_TEAM="" \
             > build_output.log 2>&1 || BUILD_FAILED=1
           if [ "$BUILD_FAILED" = "1" ]; then
-            echo "❌ BUILD FAILED - 最后100行日志:"
-            tail -100 build_output.log
+            echo "❌ BUILD FAILED - 最后300行日志:"
+            tail -300 build_output.log
             exit 1
           fi
           echo "✅ BUILD SUCCEEDED"
