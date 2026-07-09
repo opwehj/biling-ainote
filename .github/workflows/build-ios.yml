@@ -8,57 +8,22 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    name: Build Unsigned IPA
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.0.app
-          xcodebuild -version
-      - name: Install deps
-        run: npm install --legacy-peer-deps
-      - name: Expo prebuild
-        run: npx expo prebuild --platform ios --clean
+      - run: npm install --legacy-peer-deps
+      - run: npx expo prebuild --platform ios --clean
       - name: Install Pods
         run: cd ios && pod install --repo-update
-      - name: Fix build
-        run: |
-          cd ios
-          ruby -e '
-            require "xcodeproj"
-            pods = Xcodeproj::Project.open("Pods/Pods.xcodeproj")
-            pods.targets.each do |t|
-              next unless t.name == "ExpoModulesJSI"
-              t.build_phases.delete_if { |p| p.respond_to?(:name) && p.name&.include?("Build ExpoModulesJSI") }
-            end
-            pods.save
-            main = Xcodeproj::Project.open("BiLing.xcodeproj")
-            main.targets.each do |t|
-              t.build_configurations.each do |c|
-                ["CODE_SIGNING_ALLOWED","CODE_SIGNING_REQUIRED","CODE_SIGNING_SUPPORTED"].each { |k| c.build_settings[k] = "NO" }
-                ["CODE_SIGN_IDENTITY","DEVELOPMENT_TEAM","PROVISIONING_PROFILE_SPECIFIER","PROVISIONING_PROFILE"].each { |k| c.build_settings[k] = "" }
-              end
-            end
-            main.save
-          '
-      - name: Build
-        run: |
-          cd ios
-          xcodebuild build -workspace BiLing.xcworkspace -scheme BiLing -configuration Debug -destination "generic/platform=iOS" -derivedDataPath ./build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > build_output.log 2>&1 || BUILD_FAILED=1
-          if [ "$BUILD_FAILED" = "1" ]; then tail -300 build_output.log; exit 1; fi
-      - name: Package IPA
-        run: |
-          cd ios
-          APP=$(find build -name "BiLing.app" -type d | head -1)
-          [ -z "$APP" ] && { echo "No .app found"; exit 1; }
-          mkdir -p Payload && cp -r "$APP" Payload/
-          zip -ry "BiLing-TrollStore.ipa" Payload && mv "BiLing-TrollStore.ipa" ../ && ls -lh ../BiLing-TrollStore.ipa
+      - name: EAS Build (local)
+        run: npx eas-cli build --platform ios --profile preview --local --output ./BiLing.ipa --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: BiLing-TrollStore
-          path: BiLing-TrollStore.ipa
+          path: BiLing.ipa
           retention-days: 30
