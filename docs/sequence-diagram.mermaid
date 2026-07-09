@@ -1,0 +1,59 @@
+%% 笔灵 BiLing — 时序图 (Sequence Diagram)
+%% 笔记生成主流程：用户点击 → ASR → 多模态 LLM 生成 → 保存 → 跳转
+
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant S as CreateNoteScreen
+    participant H as useNoteGeneration
+    participant A as AINoteService
+    participant ASR as AsrService
+    participant LLM as BaseLLMProvider
+    participant FS as FileService
+    participant NR as NoteRepository
+    participant SS as settingsStore
+    participant Sec as SecureStorage
+
+    U->>S: 输入文本 / 选图片 / 录音频
+    U->>S: 点击"生成笔记"
+    S->>H: generate(materials)
+    H->>SS: 读取 AISetting
+    H->>Sec: 读取 llmKey / asrKey?
+    Sec-->>H: apiKeys
+
+    H->>A: generateNote(req, setting, apiKeys, onProgress)
+
+    Note over A: 阶段1 — ASR 转写音频
+    loop 每个音频素材
+        A->>ASR: transcribe(audioUri, {provider, llmKey, asrKey?})
+        alt provider.supportsAudio (Qwen)
+            ASR->>ASR: transcribeViaLLM (qwen2-audio, 复用 llmKey)
+        else GLM/Ernie
+            ASR->>ASR: transcribeViaParaformer (DashScope, 用 asrKey)
+            ASR->>ASR: submitAndPoll (异步提交+轮询)
+        end
+        ASR->>FS: readAsBase64(audioUri)
+        FS-->>ASR: base64
+        ASR-->>A: transcript 文本
+        A->>A: 回写 material.transcript
+    end
+    A-->>H: onProgress(transcribing, "正在转写音频…")
+
+    Note over A: 阶段2 — 多模态生成（图片经视觉LLM识别 + 整理笔记）
+    A->>LLM: generateNote(req, llmKey)
+    LLM->>FS: imageToDataUrl(imageUris)
+    FS-->>LLM: data URLs (base64)
+    LLM->>LLM: 组装 OpenAI 多模态消息
+    Note right of LLM: system: JSON 输出约束<br/>user: [text, image_url[]]
+    LLM->>LLM: POST {baseURL}/chat/completions
+    LLM-->>A: NoteContent JSON
+    A->>A: parseNoteContent (容错解析)
+    A-->>H: onProgress(generating, "正在整理笔记…")
+
+    A-->>H: { content: NoteContent, materials: Material[] }
+    H->>NR: create(Note + Materials)
+    NR->>NR: 事务写入 notes + materials
+    NR-->>H: savedNote (含 id)
+    H-->>S: success(noteId)
+    S->>S: 跳转 NoteDetailScreen(noteId)
+    Note over U: 用户查看生成的笔记详情

@@ -1,0 +1,192 @@
+%% 笔灵 BiLing — 类图 (Class Diagram)
+%% 数据模型 + 服务层 + 适配器模式
+
+classDiagram
+    %% ============ 数据模型 ============
+    class Note {
+        +string id
+        +string title
+        +string summary
+        +string[] keyPoints
+        +string content
+        +string[] tags
+        +string categoryId
+        +NoteStatus status
+        +Material[] materials
+        +number createdAt
+        +number updatedAt
+    }
+    class Material {
+        +string id
+        +string noteId
+        +MaterialType type
+        +string content
+        +string transcript
+        +string ocrText
+        +number createdAt
+    }
+    class Category {
+        +string id
+        +string name
+        +string color
+        +number sortOrder
+        +number createdAt
+    }
+    class AISetting {
+        +LLMProviderId llmProvider
+        +string llmModel
+        +string visionModel
+        +boolean asrEnabled
+        +number temperature
+        +string themeMode
+        +SortOrder sortOrder
+    }
+    class NoteContent {
+        +string title
+        +string summary
+        +string[] keyPoints
+        +string content
+        +string[] tags
+    }
+    Note "1" o-- "many" Material : contains
+    Note "many" --> "0..1" Category : categorized
+
+    %% ============ 数据访问层 ============
+    class NoteRepository {
+        +create(note) Note
+        +findById(id) Note
+        +findAll(filter) Note[]
+        +update(note) void
+        +delete(id) void
+        +search(keyword) Note[]
+    }
+    class MaterialRepository {
+        +findByNoteId(noteId) Material[]
+        +create(material) Material
+        +deleteByNoteId(noteId) void
+    }
+    class SettingsRepository {
+        +get() AISetting
+        +save(setting) void
+    }
+    class CategoryRepository {
+        +findAll() Category[]
+        +create(cat) Category
+        +delete(id) void
+    }
+    NoteRepository --> Note : manages
+    MaterialRepository --> Material : manages
+    SettingsRepository --> AISetting : manages
+    CategoryRepository --> Category : manages
+
+    %% ============ AI 适配器层 ============
+    class BaseLLMProvider {
+        <<abstract>>
+        +LLMProviderId id
+        +string name
+        +string baseURL
+        +string defaultModel
+        +string defaultVisionModel
+        +boolean supportsAudio
+        +string defaultAudioModel
+        +buildHeaders(apiKey) Record
+        +testConnection(apiKey, model?) boolean
+        +generateNote(req, apiKey, opts?) NoteContent
+        #imageToDataUrl(uri) string
+        #buildSystemPrompt() string
+        #buildUserContent(text, imageUris) array
+        #parseNoteContent(raw) NoteContent
+    }
+    class QwenProvider {
+        +baseURL = dashscope
+        +defaultModel = qwen-plus
+        +defaultVisionModel = qwen-vl-plus
+        +supportsAudio = true
+        +defaultAudioModel = qwen2-audio-instruct
+    }
+    class GLMProvider {
+        +baseURL = open.bigmodel.cn
+        +defaultModel = glm-4-plus
+        +defaultVisionModel = glm-4v-plus
+        +supportsAudio = false
+    }
+    class ErnieProvider {
+        +baseURL = qianfan.baidubce.com
+        +defaultModel = ernie-4.0-8k
+        +defaultVisionModel = ernie-4.5-vl-preview
+        +supportsAudio = false
+    }
+    BaseLLMProvider <|-- QwenProvider
+    BaseLLMProvider <|-- GLMProvider
+    BaseLLMProvider <|-- ErnieProvider
+
+    class ProviderFactory {
+        +create(id) BaseLLMProvider
+        +getAll() BaseLLMProvider[]
+    }
+    ProviderFactory ..> BaseLLMProvider : creates
+    ProviderFactory ..> QwenProvider : instantiates
+    ProviderFactory ..> GLMProvider : instantiates
+    ProviderFactory ..> ErnieProvider : instantiates
+
+    class AsrService {
+        +transcribe(audioUri, opts) string
+        #transcribeViaLLM(audioUri, provider, llmKey) string
+        #transcribeViaParaformer(audioUri, asrKey) string
+    }
+    class AINoteService {
+        -cancelled boolean
+        +generateNote(req, setting, keys, onProgress) NoteContent
+        +cancel() void
+    }
+    AINoteService --> BaseLLMProvider : uses (via Factory)
+    AINoteService --> AsrService : uses
+    AINoteService ..> NoteContent : produces
+    BaseLLMProvider ..> NoteContent : produces
+
+    %% ============ 存储 / 媒体服务 ============
+    class SecureStorage {
+        +getApiKey(key) string
+        +setApiKey(key, val) void
+        +deleteApiKey(key) void
+    }
+    class FileService {
+        +readAsBase64(uri) string
+        +copyToAppDir(uri) string
+        +deleteFile(uri) void
+        +exists(uri) boolean
+    }
+    class ImageService {
+        +openCamera() string
+        +openPicker() string[]
+    }
+    class AudioService {
+        +startRecording() void
+        +stopRecording() string
+        +getStatus() RecordingStatus
+    }
+    BaseLLMProvider --> FileService : reads images
+    AsrService --> FileService : reads audio
+
+    %% ============ 状态管理层 ============
+    class noteStore {
+        +Note[] notes
+        +Note currentNote
+        +loadNotes() void
+        +deleteNote(id) void
+        +searchNotes(kw) void
+    }
+    class settingsStore {
+        +AISetting setting
+        +loadSetting() void
+        +saveSetting(s) void
+    }
+    class uiStore {
+        +boolean loading
+        +string toast
+        +setLoading(v) void
+        +showToast(msg) void
+    }
+    noteStore --> NoteRepository : calls
+    settingsStore --> SettingsRepository : calls
+    settingsStore --> SecureStorage : reads keys
