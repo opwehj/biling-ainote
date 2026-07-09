@@ -1,0 +1,133 @@
+# =============================================================================
+# 笔灵 BiLing — iOS 构建（TrollStore 免签名版）
+# =============================================================================
+# 适用于通过 TrollStore 安装的用户，无需 Apple Developer 账号、无需证书签名
+# 构建出未签名的 .ipa，直接拖入 TrollStore 即可安装
+# =============================================================================
+
+name: Build iOS IPA (TrollStore)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Unsigned IPA
+    runs-on: macos-14
+
+    steps:
+      # === 1. 检出代码 ===
+      - name: 📦 Checkout
+        uses: actions/checkout@v4
+
+      # === 2. 安装 Node.js + 依赖 ===
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      # === 3. 生成 iOS 原生工程 ===
+      - name: 🔨 Expo prebuild
+        run: npx expo prebuild --platform ios --clean
+
+      # === 4. 安装 CocoaPods ===
+      - name: 📦 Install Pods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      # === 5. 禁用代码签名（TrollStore 不需要） ===
+      - name: 🔓 Disable code signing
+        run: |
+          cd ios
+          # 用 ruby 修改 Xcode 工程文件，关闭所有签名设置
+          ruby -e "
+            require 'xcodeproj'
+            project = Xcodeproj::Project.open('BiLing.xcodeproj')
+            project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['CODE_SIGNING_SUPPORTED'] = 'NO'
+                config.build_settings['CODE_SIGN_IDENTITY'] = ''
+                config.build_settings['CODE_SIGN_ENTITLEMENTS'] = ''
+                config.build_settings['DEVELOPMENT_TEAM'] = ''
+                config.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ''
+                config.build_settings['PROVISIONING_PROFILE'] = ''
+              end
+            end
+            project.save
+          "
+          echo '✅ 代码签名已禁用'
+
+      # === 6. 编译构建（无签名） ===
+      - name: 🔨 Build (unsigned)
+        run: |
+          cd ios
+          xcodebuild build \
+            -workspace BiLing.xcworkspace \
+            -scheme BiLing \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath ./build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            | tail -20
+
+      # === 7. 打包 .ipa（Payload 目录结构） ===
+      - name: 📦 Package IPA
+        run: |
+          cd ios
+
+          # 找到编译产物 .app
+          APP_PATH=$(find build -name "*.app" -type d | head -1)
+          echo "Found app: $APP_PATH"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 未找到 .app 产物"
+            exit 1
+          fi
+
+          # 创建 Payload 目录结构（.ipa 标准格式）
+          rm -rf Payload
+          mkdir Payload
+          cp -r "$APP_PATH" Payload/
+
+          # 打包为 .ipa（本质是 zip）
+          IPA_NAME="BiLing-${GITHUB_REF_NAME:-${GITHUB_RUN_NUMBER}}.ipa"
+          zip -ry "$IPA_NAME" Payload
+          echo "✅ 打包完成: $IPA_NAME"
+          ls -lh "$IPA_NAME"
+
+          # 移动到项目根目录方便上传
+          mv "$IPA_NAME" ../
+
+      # === 8. 上传 .ipa ===
+      - name: 📎 Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BiLing-TrollStore
+          path: BiLing-*.ipa
+          retention-days: 30
+
+      # === 9. 构建失败时上传日志 ===
+      - name: 📎 Upload logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ios/build/**/*.log
+          retention-days: 7
