@@ -91,7 +91,7 @@ jobs:
           xcodebuild build \
             -workspace BiLing.xcworkspace \
             -scheme BiLing \
-            -configuration Release \
+            -configuration Debug \
             -destination "generic/platform=iOS" \
             -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
