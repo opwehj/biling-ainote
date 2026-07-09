@@ -18,6 +18,10 @@ jobs:
       - run: npx expo prebuild --platform ios --clean
       - name: Install Pods
         run: cd ios && pod install --repo-update
+      - name: Init EAS project
+        run: npx eas-cli init --non-interactive --force
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       - name: EAS Build (local)
         run: npx eas-cli build --platform ios --profile preview --local --output ./BiLing.ipa --non-interactive
         env:
