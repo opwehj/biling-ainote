@@ -40,10 +40,20 @@ jobs:
 
       - name: 🔨 EAS Build (local)
         run: |
-          npx eas build --platform ios --profile preview --local \
-            --output ./BiLing.ipa --wait 2>&1 | tail -150
-        env:
-          EAS_BUILD: "true"
+          npx eas build --platform ios --profile preview --local --wait 2>&1
+
+      - name: 📦 Find and rename IPA
+        run: |
+          echo "搜索 .ipa 文件..."
+          find /Users/runner/work -name "*.ipa" -type f 2>/dev/null
+          find . -name "*.ipa" -type f
+          IPA=$(find . -name "*.ipa" -type f | head -1)
+          if [ -z "$IPA" ]; then
+            echo "❌ 未找到 .ipa"
+            exit 1
+          fi
+          echo "找到: $IPA ($(du -h "$IPA" | awk '{print $1}'))"
+          cp "$IPA" ./BiLing.ipa
 
       - name: 📎 Upload IPA
         uses: actions/upload-artifact@v4
