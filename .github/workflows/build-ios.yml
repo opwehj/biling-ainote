@@ -1,16 +1,14 @@
 # =============================================================================
 # 笔灵 BiLing — iOS 构建（TrollStore 免签名版）
 # =============================================================================
-# 适用于通过 TrollStore 安装的用户，无需 Apple Developer 账号、无需证书签名
-# 构建出未签名的 .ipa，直接拖入 TrollStore 即可安装
+# 使用 Xcode 26.3 以匹配 Expo SDK 56 的 Swift 版本（6.3.1）
 # =============================================================================
 
 name: Build iOS IPA (TrollStore)
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
 
 concurrency:
@@ -23,130 +21,64 @@ jobs:
     runs-on: macos-15
 
     steps:
-      # === 1. 检出代码 ===
       - name: 📦 Checkout
         uses: actions/checkout@v4
 
-      # === 2. 安装 Node.js + 依赖 ===
       - name: 📦 Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # === 2.5 切换到 Xcode 16 ===
-      - name: 🔧 Select Xcode 16
+      - name: 🔧 Select Xcode 26.3
         run: |
-          echo "可用 Xcode 版本:"
+          echo "可用 Xcode:"
           ls -d /Applications/Xcode*.app 2>/dev/null
-          # 选择 Xcode 16.x（不用 26.x，太新不兼容）
-          XCODE16=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE16" ]; then
-            XCODE16=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -v "26" | sort -V | tail -1)
-          fi
-          echo "选择: $XCODE16"
-          sudo xcode-select -s "$XCODE16"
+          echo "选择: /Applications/Xcode_26.3.0.app"
+          sudo xcode-select -s /Applications/Xcode_26.3.0.app
+          echo "== Xcode 版本 =="
           xcodebuild -version
+          echo "== Swift 版本 =="
+          swift --version
 
       - name: 📦 Install dependencies
         run: npm install --legacy-peer-deps
 
-      # === 3. 生成 iOS 原生工程 ===
       - name: 🔨 Expo prebuild
         run: npx expo prebuild --platform ios --clean
 
-      # === 3.5 修复 Expo 编译兼容问题 ===
-      - name: 🔧 Fix Expo build issues
-        run: |
-          # 删除 ExpoLogBox 源码（避免编译）
-          echo "移除 ExpoLogBox 源码..."
-          rm -rf node_modules/@expo/log-box/ios node_modules/@expo/log-box/ExpoLogBox 2>/dev/null
-          mkdir -p node_modules/@expo/log-box/ios
-          echo "✅ ExpoLogBox 源码已移除"
-
-      # === 4. 安装 CocoaPods ===
       - name: 📦 Install Pods
         run: |
           cd ios
           pod install --repo-update
 
-      # === 4.5 在 Pods 项目中禁用 ExpoModulesJSI 脚本 ===
-      - name: 🔧 Disable ExpoModulesJSI script
-        run: |
-          cd ios
-          # 修改 Pods.xcodeproj 中的 ExpoModulesJSI target
-          ruby -e '
-            require "xcodeproj"
-
-            pods_proj = "Pods/Pods.xcodeproj"
-            unless File.exist?(pods_proj)
-              # 尝试找 Pods.xcodeproj
-              pods_proj = Dir["Pods/**/Pods.xcodeproj"].first
-            end
-
-            if pods_proj && File.exist?(pods_proj)
-              project = Xcodeproj::Project.open(pods_proj)
-              count = 0
-              project.targets.each do |target|
-                next unless target.name == "ExpoModulesJSI"
-
-                target.build_phases.each do |phase|
-                  if phase.respond_to?(:name) && phase.name&.include?("Build ExpoModulesJSI")
-                    # 替换为空的 shell 脚本
-                    new_script = "echo \"ExpoModulesJSI build disabled for TrollStore compatibility\""
-                    phase.shell_script = new_script
-                    phase.name = "[Disabled] Build ExpoModulesJSI"
-                    count += 1
-                    puts "✅ #{target.name} - Build脚本已禁用"
-                  end
-                end
-              end
-              project.save
-              puts "✅ 修改了 #{count} 个脚本" if count > 0
-            else
-              puts "⚠️ Pods.xcodeproj 未找到，尝试直接删除脚本文件"
-            end
-
-            # 兜底方案：直接找并替换 ExpoModulesJSI.build 中的脚本
-            script_files = Dir["build/**/ExpoModulesJSI.build/Script-*.sh"]
-            script_files.each do |f|
-              File.write(f, "#!/bin/bash\necho \"disabled for TrollStore\"")
-              puts "✅ 已替换脚本文件: #{f}"
-            end
-          '
-          echo "✅ ExpoModulesJSI 修复完成"
-
-      # === 5. 禁用代码签名（TrollStore 不需要） ===
       - name: 🔓 Disable code signing
         run: |
           cd ios
-          # 用 ruby 修改 Xcode 工程文件，关闭所有签名设置
-          ruby -e "
-            require 'xcodeproj'
-            project = Xcodeproj::Project.open('BiLing.xcodeproj')
-            project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-                config.build_settings['CODE_SIGNING_SUPPORTED'] = 'NO'
-                config.build_settings['CODE_SIGN_IDENTITY'] = ''
-                config.build_settings['CODE_SIGN_ENTITLEMENTS'] = ''
-                config.build_settings['DEVELOPMENT_TEAM'] = ''
-                config.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ''
-                config.build_settings['PROVISIONING_PROFILE'] = ''
+          ruby -e '
+            require "xcodeproj"
+            proj = Xcodeproj::Project.open("BiLing.xcodeproj")
+            proj.targets.each do |t|
+              t.build_configurations.each do |c|
+                c.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
+                c.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
+                c.build_settings["CODE_SIGNING_SUPPORTED"] = "NO"
+                c.build_settings["CODE_SIGN_IDENTITY"] = ""
+                c.build_settings["DEVELOPMENT_TEAM"] = ""
+                c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
+                c.build_settings["PROVISIONING_PROFILE"] = ""
               end
             end
-            project.save
-          "
-          echo '✅ 代码签名已禁用'
+            proj.save
+          '
+          echo "✅ 代码签名已禁用"
 
-      # === 6. 编译构建（无签名） ===
       - name: 🔨 Build (unsigned)
         run: |
           cd ios
           xcodebuild build \
             -workspace BiLing.xcworkspace \
             -scheme BiLing \
-            -configuration Debug \
+            -configuration Release \
             -destination "generic/platform=iOS" \
             -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
@@ -159,46 +91,25 @@ jobs:
             tail -300 build_output.log
             exit 1
           fi
-          echo "✅ BUILD SUCCEEDED"
-          tail -5 build_output.log
+          echo "✅ BUILD SUCCEEDED: $(tail -1 build_output.log)"
 
-      # === 7. 打包 .ipa（Payload 目录结构） ===
       - name: 📦 Package IPA
         run: |
           cd ios
-
-          # 找到编译产物 .app
           APP_PATH=$(find build -name "*.app" -type d | head -1)
-          echo "Found app: $APP_PATH"
-
           if [ -z "$APP_PATH" ]; then
-            echo "❌ 未找到 .app 产物"
+            echo "❌ 未找到 .app"
             exit 1
           fi
-
-          # 检查 .app 大小
-          APP_SIZE=$(du -sh "$APP_PATH" | awk '{print $1}')
-          echo "App 大小: $APP_SIZE"
-          if [ "$APP_SIZE" = "0B" ] || [ -z "$(ls -A "$APP_PATH")" ]; then
-            echo "❌ .app 为空，构建可能失败"
-            exit 1
-          fi
-
-          # 创建 Payload 目录结构（.ipa 标准格式）
-          rm -rf Payload
-          mkdir Payload
+          APP_SIZE=$(du -sm "$APP_PATH" | awk '{print $1}')
+          echo "App: $APP_PATH ($APP_SIZE MB)"
+          rm -rf Payload && mkdir Payload
           cp -r "$APP_PATH" Payload/
+          IPA="BiLing-${GITHUB_REF_NAME:-${GITHUB_RUN_NUMBER}}.ipa"
+          zip -ry "$IPA" Payload
+          mv "$IPA" ../
+          ls -lh ../"$IPA"
 
-          # 打包为 .ipa（本质是 zip）
-          IPA_NAME="BiLing-${GITHUB_REF_NAME:-${GITHUB_RUN_NUMBER}}.ipa"
-          zip -ry "$IPA_NAME" Payload
-          echo "✅ 打包完成: $IPA_NAME"
-          ls -lh "$IPA_NAME"
-
-          # 移动到项目根目录方便上传
-          mv "$IPA_NAME" ../
-
-      # === 8. 上传 .ipa ===
       - name: 📎 Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -206,7 +117,6 @@ jobs:
           path: BiLing-*.ipa
           retention-days: 30
 
-      # === 9. 构建失败时上传日志 ===
       - name: 📎 Upload logs (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
