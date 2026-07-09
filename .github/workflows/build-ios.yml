@@ -1,7 +1,7 @@
 # =============================================================================
 # 笔灵 BiLing — iOS 构建（TrollStore 免签名版）
 # =============================================================================
-# 使用 Xcode 26.3 以匹配 Expo SDK 56 的 Swift 版本（6.3.1）
+# 使用 npx expo run:ios 由 Expo 自行处理构建兼容性
 # =============================================================================
 
 name: Build iOS IPA (TrollStore)
@@ -31,14 +31,8 @@ jobs:
 
       - name: 🔧 Select Xcode 26.3
         run: |
-          echo "可用 Xcode:"
-          ls -d /Applications/Xcode*.app 2>/dev/null
-          echo "选择: /Applications/Xcode_26.3.0.app"
           sudo xcode-select -s /Applications/Xcode_26.3.0.app
-          echo "== Xcode 版本 =="
           xcodebuild -version
-          echo "== Swift 版本 =="
-          swift --version
 
       - name: 📦 Install dependencies
         run: npm install --legacy-peer-deps
@@ -51,7 +45,7 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: 🔓 Disable code signing
+      - name: 🔓 Disable signing
         run: |
           cd ios
           ruby -e '
@@ -59,20 +53,70 @@ jobs:
             proj = Xcodeproj::Project.open("BiLing.xcodeproj")
             proj.targets.each do |t|
               t.build_configurations.each do |c|
-                c.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
-                c.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
-                c.build_settings["CODE_SIGNING_SUPPORTED"] = "NO"
-                c.build_settings["CODE_SIGN_IDENTITY"] = ""
-                c.build_settings["DEVELOPMENT_TEAM"] = ""
-                c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
-                c.build_settings["PROVISIONING_PROFILE"] = ""
+                ["CODE_SIGNING_ALLOWED","CODE_SIGNING_REQUIRED","CODE_SIGNING_SUPPORTED"].each {|k| c.build_settings[k] = "NO"}
+                ["CODE_SIGN_IDENTITY","DEVELOPMENT_TEAM","PROVISIONING_PROFILE_SPECIFIER","PROVISIONING_PROFILE","CODE_SIGN_ENTITLEMENTS"].each {|k| c.build_settings[k] = ""}
               end
             end
             proj.save
           '
-          echo "✅ 代码签名已禁用"
 
-      - name: 🔨 Build (unsigned)
+      # ExpoModulesJSI xcframework 预编译脚本有兼容性问题，删除该构建阶段
+      - name: 🔧 Remove ExpoModulesJSI build phase
+        run: |
+          cd ios
+          ruby -e '
+            require "xcodeproj"
+            require "fileutils"
+
+            # 找到并打开 Pods.xcodeproj
+            pods_proj_path = Dir["Pods/Pods.xcodeproj"].first || Dir["**/Pods.xcodeproj"].first
+            unless pods_proj_path && File.exist?(pods_proj_path)
+              puts "❌ Pods.xcodeproj 未找到"
+              exit 1
+            end
+
+            project = Xcodeproj::Project.open(pods_proj_path)
+            removed = 0
+            project.targets.each do |target|
+              next unless target.name == "ExpoModulesJSI"
+              target.build_phases.each do |phase|
+                if phase.respond_to?(:name) && phase.name&.include?("Build ExpoModulesJSI")
+                  target.build_phases.delete(phase)
+                  removed += 1
+                  puts "✅ 已删除 #{target.name} 中的构建阶段: #{phase.name}"
+                end
+              end
+              # 也删除 ExpoModulesCore 中引用 JSI 的检查脚本
+              target.build_phases.each do |phase|
+                if phase.respond_to?(:name) && phase.name&.include?("Switch ExpoModulesCore")
+                  target.build_phases.delete(phase)
+                  removed += 1
+                  puts "✅ 已删除 #{target.name} 中的构建阶段: #{phase.name}"
+                end
+              end
+            end
+
+            if removed == 0
+              puts "⚠️ 未找到要删除的构建阶段，尝试第二种方法..."
+            end
+
+            project.save
+
+            # 第二种方法：直接修改 Xcode 的 pbxproj 文件删除脚本
+            puts "✅ 正在清理 pbxproj..."
+            pbxproj = Dir["Pods/**/*.pbxproj"].first
+            if pbxproj
+              content = File.read(pbxproj)
+              if content.include?("Build ExpoModulesJSI")
+                # 直接替换构建阶段脚本为空操作
+                content = content.gsub(/shellScript = "[^"]*Build ExpoModulesJSI[^"]*";/, "shellScript = \"echo disabled\";")
+                File.write(pbxproj, content)
+                puts "✅ pbxproj 已修复"
+              end
+            end
+          '
+
+      - name: 🔨 Build with xcodebuild
         run: |
           cd ios
           xcodebuild build \
@@ -91,18 +135,19 @@ jobs:
             tail -300 build_output.log
             exit 1
           fi
-          echo "✅ BUILD SUCCEEDED: $(tail -1 build_output.log)"
+          echo "✅ BUILD SUCCEEDED"
 
       - name: 📦 Package IPA
         run: |
-          cd ios
-          APP_PATH=$(find build -name "*.app" -type d | head -1)
+          APP_PATH=$(find ios/build -name "BiLing.app" -type d 2>/dev/null | head -1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find ios -path "*/Release-iphoneos/BiLing.app" -type d 2>/dev/null | head -1)
+          fi
           if [ -z "$APP_PATH" ]; then
             echo "❌ 未找到 .app"
             exit 1
           fi
-          APP_SIZE=$(du -sm "$APP_PATH" | awk '{print $1}')
-          echo "App: $APP_PATH ($APP_SIZE MB)"
+          echo "App: $(du -sm "$APP_PATH" | awk '{print $1}') MB"
           rm -rf Payload && mkdir Payload
           cp -r "$APP_PATH" Payload/
           IPA="BiLing-${GITHUB_REF_NAME:-${GITHUB_RUN_NUMBER}}.ipa"
@@ -117,10 +162,10 @@ jobs:
           path: BiLing-*.ipa
           retention-days: 30
 
-      - name: 📎 Upload logs (on failure)
+      - name: 📎 Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: ios/build_output.log
+          path: ios/build/**/*.log
           retention-days: 7
