@@ -1,78 +1,49 @@
-/**
- * @file services/db/database.ts
- * @description SQLite 连接与初始化。使用 expo-sqlite 现代 API（openSync / prepareAsync）。
- *              提供单例 db 句柄与 initDatabase 入口。
- */
-
-import * as SQLite from 'expo-sqlite';
-import { DB_CONFIG } from '../../constants/config';
-import { CREATE_TABLES_SQL, SEED_CATEGORIES_SQL, SEED_SETTINGS_SQL } from './migrations';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import logger from '../../utils/logger';
 
-/** SQLite 数据库实例类型（expo-sqlite v15） */
-export type SQLiteDatabase = SQLite.SQLiteDatabase;
+const DB_KEY = 'biling_db';
+let initialized = false;
 
-let dbInstance: SQLiteDatabase | null = null;
-let initPromise: Promise<SQLiteDatabase> | null = null;
-
-/**
- * 打开数据库（单例）。
- * @returns SQLite 数据库实例
- */
-function openDatabase(): SQLiteDatabase {
-  if (!dbInstance) {
-    dbInstance = SQLite.openDatabaseSync(DB_CONFIG.NAME);
-    logger.info('SQLite database opened:', DB_CONFIG.NAME);
+export async function initDatabase(): Promise<void> {
+  if (initialized) return;
+  try {
+    await AsyncStorage.getItem(DB_KEY);
+    initialized = true;
+    logger.info('Database initialized');
+  } catch (err) {
+    logger.error('Database init failed', err);
+    throw err;
   }
-  return dbInstance;
 }
 
-/**
- * 初始化数据库：开启外键、建表、种子数据。
- * 幂等，多次调用安全。
- */
-export async function initDatabase(): Promise<SQLiteDatabase> {
-  if (initPromise) {
-    return initPromise;
-  }
-  initPromise = (async () => {
-    const db = openDatabase();
-    await db.execAsync('PRAGMA journal_mode = WAL;');
-    await db.execAsync('PRAGMA foreign_keys = ON;');
-
-    for (const sql of CREATE_TABLES_SQL) {
-      await db.execAsync(sql);
-    }
-    await db.execAsync(SEED_CATEGORIES_SQL);
-    await db.execAsync(SEED_SETTINGS_SQL);
-
-    logger.info('Database initialized with tables and seed data');
-    return db;
-  })();
-  return initPromise;
+export async function getData<T>(key: string): Promise<T | null> {
+  try {
+    const raw = await AsyncStorage.getItem(`${DB_KEY}_${key}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 }
 
-/**
- * 获取已初始化的数据库实例。
- * 必须在 initDatabase 完成后调用。
- */
-export function getDatabase(): SQLiteDatabase {
-  if (!dbInstance) {
-    // 兜底：若未显式初始化，则尝试打开（同步打开在 RN 中是允许的）
-    dbInstance = SQLite.openDatabaseSync(DB_CONFIG.NAME);
-    logger.warn('Database accessed before initDatabase, opening lazily');
-  }
-  return dbInstance;
+export async function setData<T>(key: string, value: T): Promise<void> {
+  try { await AsyncStorage.setItem(`${DB_KEY}_${key}`, JSON.stringify(value)); }
+  catch (err) { logger.error('setData failed', err); }
 }
 
-/**
- * 关闭数据库（测试用）。
- */
-export async function closeDatabase(): Promise<void> {
-  if (dbInstance) {
-    await dbInstance.closeAsync();
-    dbInstance = null;
-    initPromise = null;
-    logger.info('Database closed');
-  }
+export async function removeData(key: string): Promise<void> {
+  try { await AsyncStorage.removeItem(`${DB_KEY}_${key}`); }
+  catch (err) { logger.error('removeData failed', err); }
+}
+
+export async function getAllKeys(): Promise<string[]> {
+  try {
+    const all = await AsyncStorage.getAllKeys();
+    return all.filter(k => k.startsWith(DB_KEY)).map(k => k.replace(`${DB_KEY}_`, ''));
+  } catch { return []; }
+}
+
+export async function clearAll(): Promise<void> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const dbKeys = keys.filter(k => k.startsWith(DB_KEY));
+    if (dbKeys.length > 0) await AsyncStorage.multiRemove(dbKeys);
+  } catch (err) { logger.error('clearAll failed', err); }
 }
