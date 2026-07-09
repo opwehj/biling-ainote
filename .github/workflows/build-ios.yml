@@ -18,10 +18,17 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.3.0.app
           xcodebuild -version
       - run: npm install --legacy-peer-deps
+      - name: Remove Expo Swift sources
+        run: |
+          echo "删除所有 Expo 模块中的 .swift 文件（只保留 JS API）..."
+          find node_modules -path "*/expo-*" -name "*.swift" -delete 2>/dev/null
+          find node_modules -path "*/@expo/*" -name "*.swift" -delete 2>/dev/null
+          find node_modules -path "*expo*" -name "*.swift" -delete 2>/dev/null
+          echo "✅ 已删除所有 Swift 源文件"
       - run: npx expo prebuild --platform ios --clean
       - name: Pod install
         run: cd ios && pod install --repo-update
-      - name: Fix Swift & signing
+      - name: Fix build
         run: |
           cd ios
           ruby -e '
@@ -30,11 +37,6 @@ jobs:
             pods.targets.each do |t|
               next unless t.name == "ExpoModulesJSI"
               t.build_phases.delete_if { |p| p.respond_to?(:name) && p.name&.include?("Build ExpoModulesJSI") }
-            end
-            pods.targets.each do |t|
-              if t.name.to_s.start_with?("Expo")
-                t.build_configurations.each { |c| c.build_settings["SWIFT_VERSION"] = "5.0" }
-              end
             end
             pods.save
             main = Xcodeproj::Project.open("BiLing.xcodeproj")
