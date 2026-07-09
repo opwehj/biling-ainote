@@ -59,9 +59,6 @@ module.exports = {
           microphonePermission: '笔灵需要使用麦克风来录制音频作为笔记素材。',
         },
       ],
-      [
-        'expo-secure-store',
-      ],
     ],
     experiments: {
       tsconfigPaths: false,
