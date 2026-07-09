@@ -88,7 +88,6 @@ jobs:
       - name: 🔨 Build (unsigned)
         run: |
           cd ios
-          set -o pipefail
           xcodebuild build \
             -workspace BiLing.xcworkspace \
             -scheme BiLing \
@@ -99,8 +98,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            2>&1 | tail -50
-          echo "Build exit code: $?"
+            > build_output.log 2>&1 || BUILD_FAILED=1
+          if [ "$BUILD_FAILED" = "1" ]; then
+            echo "❌ BUILD FAILED - 最后100行日志:"
+            tail -100 build_output.log
+            exit 1
+          fi
+          echo "✅ BUILD SUCCEEDED"
+          tail -5 build_output.log
 
       # === 7. 打包 .ipa（Payload 目录结构） ===
       - name: 📦 Package IPA
@@ -152,5 +157,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: ios/build/**/*.log
+          path: ios/build_output.log
           retention-days: 7
