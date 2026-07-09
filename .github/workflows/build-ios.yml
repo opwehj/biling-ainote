@@ -33,6 +33,17 @@ jobs:
         with:
           node-version: '20'
 
+      # === 2.5 切换到 Xcode 16+ ===
+      - name: 🔧 Select Xcode 16+
+        run: |
+          echo "可用 Xcode 版本:"
+          ls -d /Applications/Xcode*.app 2>/dev/null
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "选择: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE"
+          echo "当前 Xcode 版本:"
+          xcodebuild -version
+
       - name: 📦 Install dependencies
         run: npm install --legacy-peer-deps
 
