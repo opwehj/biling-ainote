@@ -33,15 +33,18 @@ jobs:
         with:
           node-version: '20'
 
-      # === 2.5 切换到 Xcode 16+ ===
-      - name: 🔧 Select Xcode 16+
+      # === 2.5 切换到 Xcode 16 ===
+      - name: 🔧 Select Xcode 16
         run: |
           echo "可用 Xcode 版本:"
           ls -d /Applications/Xcode*.app 2>/dev/null
-          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
-          echo "选择: $LATEST_XCODE"
-          sudo xcode-select -s "$LATEST_XCODE"
-          echo "当前 Xcode 版本:"
+          # 选择 Xcode 16.x（不用 26.x，太新不兼容）
+          XCODE16=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE16" ]; then
+            XCODE16=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -v "26" | sort -V | tail -1)
+          fi
+          echo "选择: $XCODE16"
+          sudo xcode-select -s "$XCODE16"
           xcodebuild -version
 
       - name: 📦 Install dependencies
@@ -85,6 +88,7 @@ jobs:
       - name: 🔨 Build (unsigned)
         run: |
           cd ios
+          set -o pipefail
           xcodebuild build \
             -workspace BiLing.xcworkspace \
             -scheme BiLing \
@@ -95,7 +99,8 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            | tail -20
+            2>&1 | tail -50
+          echo "Build exit code: $?"
 
       # === 7. 打包 .ipa（Payload 目录结构） ===
       - name: 📦 Package IPA
@@ -108,6 +113,14 @@ jobs:
 
           if [ -z "$APP_PATH" ]; then
             echo "❌ 未找到 .app 产物"
+            exit 1
+          fi
+
+          # 检查 .app 大小
+          APP_SIZE=$(du -sh "$APP_PATH" | awk '{print $1}')
+          echo "App 大小: $APP_SIZE"
+          if [ "$APP_SIZE" = "0B" ] || [ -z "$(ls -A "$APP_PATH")" ]; then
+            echo "❌ .app 为空，构建可能失败"
             exit 1
           fi
 
