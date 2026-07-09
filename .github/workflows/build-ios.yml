@@ -54,13 +54,47 @@ jobs:
       - name: 🔨 Expo prebuild
         run: npx expo prebuild --platform ios --clean
 
-      # === 3.5 移除开发专用模块（ExpoLogBox等），避免编译兼容问题 ===
-      - name: 🧹 Remove dev-only pods
+      # === 3.5 修复 Expo 编译兼容问题 ===
+      - name: 🔧 Fix Expo build issues
         run: |
+          # 1. 删除 ExpoLogBox 源码（编译错误源）
+          echo "删除 ExpoLogBox 源码..."
+          rm -rf node_modules/@expo/log-box/ios node_modules/@expo/log-box/ExpoLogBox 2>/dev/null
+          mkdir -p node_modules/@expo/log-box/ios
+          echo "✅ ExpoLogBox 源码已移除"
+
+          # 2. 在 pod install 前修改 Xcode 项目
           cd ios
-          # 移除 ExpoLogBox（开发调试用，生产不需要）
-          sed -i '' '/ExpoLogBox/d' Podfile || sed -i '/ExpoLogBox/d' Podfile
-          echo "✅ 已移除 ExpoLogBox"
+          # 用 ruby 禁用 ExpoModulesJSI 构建脚本 + 删除 ExpoLogBox 引用
+          ruby -e '
+            require "xcodeproj"
+
+            # 删除 ExpoLogBox pod 引用（如果存在）
+            podfile = File.read("Podfile")
+            if podfile.include?("ExpoLogBox")
+              File.write("Podfile", podfile.gsub(/.*ExpoLogBox.*\n/, ""))
+              puts "✅ Podfile 中 ExpoLogBox 引用已删除"
+            end
+
+            # 处理 Xcode 项目
+            proj = Xcodeproj::Project.open("BiLing.xcodeproj")
+
+            # 删除 ExpoModulesJSI target 的构建脚本
+            proj.targets.each do |target|
+              if target.name == "ExpoModulesJSI"
+                target.build_phases.each do |phase|
+                  if phase.respond_to?(:name) && phase.name&.include?("Build ExpoModulesJSI")
+                    phase.shell_script = "echo disabled > /dev/null"
+                    phase.name = "[Disabled] Build ExpoModulesJSI"
+                    puts "✅ ExpoModulesJSI 构建脚本已禁用"
+                  end
+                end
+              end
+            end
+
+            proj.save
+            puts "✅ Xcode 项目已更新"
+          '
 
       # === 4. 安装 CocoaPods ===
       - name: 📦 Install Pods
